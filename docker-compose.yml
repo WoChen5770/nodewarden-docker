@@ -1,0 +1,13 @@
+services:
+  nodewarden:
+    image: ghcr.io/wochen5770/nodewarden:latest
+    ports:
+      - "8787:8787"
+    environment:
+      WRANGLER_PORT: 8787
+      WRANGLER_PERSIST_DIR: /data/wrangler-state
+    working_dir: /app
+    volumes:
+      - ./runtime/shared-state:/data
+      - ./runtime/.dev.vars:/app/.dev.vars:ro
+    restart: unless-stopped

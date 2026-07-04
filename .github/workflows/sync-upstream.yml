@@ -1,0 +1,178 @@
+name: Sync upstream images
+
+on:
+  schedule:
+    - cron: '17 */4 * * *'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional upstream release tag to force-build.
+        required: false
+        type: string
+      upstream_ref:
+        description: Optional upstream branch or commit SHA for dev image. Defaults to main.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: nodewarden-sync-upstream
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/nodewarden
+
+jobs:
+  prepare-dev:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      upstream_ref: ${{ steps.resolve.outputs.upstream_ref }}
+      upstream_sha: ${{ steps.resolve.outputs.upstream_sha }}
+      image_tags: ${{ steps.resolve.outputs.image_tags }}
+      image_version: ${{ steps.resolve.outputs.image_version }}
+      image_title: ${{ steps.resolve.outputs.image_title }}
+    steps:
+      - name: Check out packaging repository
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Resolve upstream head
+        id: resolve
+        env:
+          INPUT_UPSTREAM_REF: ${{ inputs.upstream_ref }}
+        run: |
+          set -eu
+          ref="${INPUT_UPSTREAM_REF:-main}"
+          if printf '%s' "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+            upstream_sha="$ref"
+            upstream_short_sha="$(printf '%s' "$upstream_sha" | cut -c1-7)"
+          else
+            chmod +x scripts/resolve-upstream-head.sh
+            eval "$(scripts/resolve-upstream-head.sh "$ref")"
+            upstream_sha="$upstream_sha"
+            upstream_short_sha="$upstream_short_sha"
+          fi
+
+          {
+            echo "upstream_ref=$upstream_sha"
+            echo "upstream_sha=$upstream_sha"
+            echo "image_version=dev-$upstream_short_sha"
+            echo "image_title=NodeWarden dev $upstream_short_sha"
+            echo 'image_tags<<EOF'
+            printf 'type=raw,value=dev-%s\n' "$upstream_short_sha"
+            echo 'type=raw,value=dev'
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether dev image already exists
+        id: check
+        run: |
+          chmod +x scripts/registry-has-tag.sh
+          eval "$(scripts/registry-has-tag.sh "$IMAGE_NAME:${{ steps.resolve.outputs.image_version }}")"
+          if [ "$exists" = "true" ]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-dev:
+    needs: prepare-dev
+    if: needs.prepare-dev.outputs.should_build == 'true'
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      channel: dev
+      upstream_ref: ${{ needs.prepare-dev.outputs.upstream_ref }}
+      upstream_sha: ${{ needs.prepare-dev.outputs.upstream_sha }}
+      image_tags: ${{ needs.prepare-dev.outputs.image_tags }}
+      image_version: ${{ needs.prepare-dev.outputs.image_version }}
+      image_title: ${{ needs.prepare-dev.outputs.image_title }}
+
+  prepare-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      upstream_ref: ${{ steps.resolve.outputs.upstream_ref }}
+      upstream_sha: ${{ steps.resolve.outputs.upstream_sha }}
+      image_tags: ${{ steps.resolve.outputs.image_tags }}
+      image_version: ${{ steps.resolve.outputs.image_version }}
+      image_title: ${{ steps.resolve.outputs.image_title }}
+    steps:
+      - name: Check out packaging repository
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Resolve upstream release
+        id: resolve
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -eu
+          if [ -n "${INPUT_RELEASE_TAG:-}" ]; then
+            tag="$INPUT_RELEASE_TAG"
+          else
+            tag="$(curl -fsSL -H 'Accept: application/vnd.github+json' https://api.github.com/repos/shuaiplus/nodewarden/releases/latest | jq -r '.tag_name')"
+          fi
+
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            echo "failed to resolve upstream release tag" >&2
+            exit 1
+          fi
+
+          chmod +x scripts/resolve-upstream-release.sh
+          eval "$(scripts/resolve-upstream-release.sh "$tag")"
+
+          {
+            echo "upstream_ref=$upstream_tag"
+            echo "upstream_sha=$upstream_sha"
+            echo "image_version=$upstream_tag"
+            echo "image_title=NodeWarden $upstream_tag"
+            echo 'image_tags<<EOF'
+            printf 'type=raw,value=%s\n' "$upstream_tag"
+            echo 'type=raw,value=latest'
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether release image already exists
+        id: check
+        run: |
+          chmod +x scripts/registry-has-tag.sh
+          eval "$(scripts/registry-has-tag.sh "$IMAGE_NAME:${{ steps.resolve.outputs.image_version }}")"
+          if [ "$exists" = "true" ]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-release:
+    needs: prepare-release
+    if: needs.prepare-release.outputs.should_build == 'true'
+    uses: ./.github/workflows/reusable-build.yml
+    with:
+      channel: release
+      upstream_ref: ${{ needs.prepare-release.outputs.upstream_ref }}
+      upstream_sha: ${{ needs.prepare-release.outputs.upstream_sha }}
+      image_tags: ${{ needs.prepare-release.outputs.image_tags }}
+      image_version: ${{ needs.prepare-release.outputs.image_version }}
+      image_title: ${{ needs.prepare-release.outputs.image_title }}

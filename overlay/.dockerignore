@@ -1,0 +1,15 @@
+.git
+.github
+.claude
+.wrangler
+node_modules
+dist
+build
+.DS_Store
+*.log
+npm-debug.log*
+.env
+.env.local
+.dev.vars
+tmp
+.tmp

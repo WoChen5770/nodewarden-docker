@@ -1,0 +1,5 @@
+JWT_SECRET=replace-with-a-long-random-string-of-at-least-32-characters
+# Optional WebAuthn settings for localhost testing
+# WEBAUTHN_RP_ID=localhost
+# WEBAUTHN_RP_NAME=NodeWarden Local
+# WEBAUTHN_ALLOWED_ORIGINS=http://localhost:8787
