@@ -6,8 +6,13 @@ services:
     environment:
       WRANGLER_PORT: 8787
       WRANGLER_PERSIST_DIR: /data/wrangler-state
+      # TLS certificate configuration (required for HTTPS backups)
+      SSL_CERT_FILE: "/etc/ssl/certs/ca-certificates.crt"
+      SSL_CERT_DIR: "/etc/ssl/certs"
     working_dir: /app
     volumes:
       - ./runtime/shared-state:/data
       - ./runtime/.dev.vars:/app/.dev.vars:ro
+      # Mount system certificates (required for HTTPS backups)
+      - /etc/ssl/certs:/etc/ssl/certs:ro
     restart: unless-stopped
